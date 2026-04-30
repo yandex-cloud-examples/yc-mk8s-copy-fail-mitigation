@@ -1,0 +1,144 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: cve-2026-31431-fix
+  namespace: kube-system
+  labels:
+    app: cve-2026-31431-fix
+    security: vulnerability-mitigation
+spec:
+  selector:
+    matchLabels:
+      app: cve-2026-31431-fix
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+  template:
+    metadata:
+      labels:
+        app: cve-2026-31431-fix
+    spec:
+      hostPID: true
+      tolerations:
+      # Tolerate all taints to ensure deployment on all worker nodes
+      - operator: Exists
+        effect: NoExecute
+      - operator: Exists
+        effect: NoSchedule
+      initContainers:
+      - name: apply-fix
+        image: ubuntu:22.04
+        command:
+        - /bin/bash
+        - -c
+        - |
+          set -e
+          
+          echo "========================================="
+          echo "CVE-2026-31431 Fix for Yandex Managed K8s"
+          echo "Node: $(cat /host/etc/hostname 2>/dev/null || hostname)"
+          echo "Date: $(date)"
+          echo "========================================="
+          
+          echo ""
+          echo "Step 1: Checking vulnerability before fix..."
+          if nsenter -t 1 -m -u -i -n -p -- python3 -c 'import socket; s = socket.socket(socket.AF_ALG, socket.SOCK_SEQPACKET, 0); s.bind(("aead","authencesn(hmac(sha256),cbc(aes))"))' 2>/dev/null; then
+            echo "❌ System is VULNERABLE - AF_ALG AEAD interface is accessible"
+          else
+            echo "✓ AF_ALG AEAD interface is not accessible"
+          fi
+          
+          echo ""
+          echo "Step 2: Creating modprobe configuration..."
+          # Create modprobe.d directory if it doesn't exist
+          mkdir -p /host/etc/modprobe.d
+          
+          # Disable algif_aead module
+          echo "install algif_aead /bin/false" > /host/etc/modprobe.d/disable-algif.conf
+          echo "✓ Created /etc/modprobe.d/disable-algif.conf"
+          
+          echo ""
+          echo "Step 3: Unloading algif_aead module if loaded..."
+          chroot /host rmmod algif_aead 2>/dev/null && echo "✓ Module unloaded successfully" || echo "✓ Module was not loaded or already unloaded"
+          
+          echo ""
+          echo "Step 4: Verifying the fix..."
+          if [ -f /host/etc/modprobe.d/disable-algif.conf ]; then
+            echo "✓ Configuration file exists:"
+            cat /host/etc/modprobe.d/disable-algif.conf
+          else
+            echo "✗ ERROR: Fix verification failed - configuration file not found"
+            exit 1
+          fi
+          
+          echo ""
+          echo "Step 5: Testing if vulnerability is fixed..."
+          if nsenter -t 1 -m -u -i -n -p -- python3 -c 'import socket; s = socket.socket(socket.AF_ALG, socket.SOCK_SEQPACKET, 0); s.bind(("aead","authencesn(hmac(sha256),cbc(aes))"))' 2>/dev/null; then
+            echo "✗ ERROR: AF_ALG AEAD is still accessible after fix!"
+            exit 1
+          else
+            echo "✓ AF_ALG AEAD interface is properly blocked"
+          fi
+          
+          echo ""
+          echo "========================================="
+          echo "✓ CVE-2026-31431 fix applied successfully"
+          echo "========================================="
+        securityContext:
+          privileged: true
+        volumeMounts:
+        - name: host-root
+          mountPath: /host
+        resources:
+          requests:
+            cpu: 10m
+            memory: 64Mi
+          limits:
+            cpu: 200m
+            memory: 128Mi
+      containers:
+      - name: monitor
+        image: ubuntu:22.04
+        command:
+        - /bin/bash
+        - -c
+        - |
+          echo "CVE-2026-31431 fix monitoring started on node: $(cat /host/etc/hostname 2>/dev/null || hostname)"
+          echo "Monitoring interval: 1 hour"
+          
+          # Keep the pod running and monitor the fix
+          while true; do
+            sleep 3600
+            
+            # Check if configuration file still exists
+            if [ ! -f /host/etc/modprobe.d/disable-algif.conf ]; then
+              echo "[$(date)] WARNING: Fix configuration missing on $(cat /host/etc/hostname), reapplying..."
+              mkdir -p /host/etc/modprobe.d
+              echo "install algif_aead /bin/false" > /host/etc/modprobe.d/disable-algif.conf
+              echo "[$(date)] Configuration restored"
+            fi
+            
+            # Check if module is loaded (should not be)
+            if chroot /host lsmod | grep -q algif_aead; then
+              echo "[$(date)] WARNING: algif_aead module is loaded on $(cat /host/etc/hostname), attempting to unload..."
+              chroot /host rmmod algif_aead 2>/dev/null || echo "[$(date)] Could not unload module"
+            fi
+          done
+        securityContext:
+          privileged: true
+        volumeMounts:
+        - name: host-root
+          mountPath: /host
+        resources:
+          requests:
+            cpu: 5m
+            memory: 32Mi
+          limits:
+            cpu: 50m
+            memory: 64Mi
+      volumes:
+      - name: host-root
+        hostPath:
+          path: /
+          type: Directory
