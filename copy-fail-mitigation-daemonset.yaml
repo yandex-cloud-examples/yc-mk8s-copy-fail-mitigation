@@ -19,6 +19,7 @@ spec:
       labels:
         app.kubernetes.io/name: cve-2026-31431-fix
     spec:
+      priorityClassName: system-node-critical
       hostPID: true  # Required for nsenter
       securityContext:
         appArmorProfile:
@@ -106,10 +107,7 @@ spec:
           volumeMounts:
             - name: host-etc-root
               mountPath: /host/etc
-          resources:
-            limits:
-              cpu: 200m
-              memory: 128Mi
+          resources: {}  # Bypass scheduling resources constraints to guarantee pod scheduling
       containers:
         - name: monitor
           image: busybox:1.36.1
@@ -158,10 +156,7 @@ spec:
           volumeMounts:
             - name: host-etc-root
               mountPath: /host/etc
-          resources:
-            limits:
-              cpu: 50m
-              memory: 64Mi
+          resources: {}  # Bypass scheduling resources constraints to guarantee pod scheduling
       volumes:
         - name: host-etc-root
           hostPath:
