@@ -20,7 +20,7 @@ spec:
         app.kubernetes.io/name: cve-2026-31431-fix
     spec:
       hostPID: true  # Required for nsenter
-      podSecurityContext:
+      securityContext:
         appArmorProfile:
           type: Unconfined  # Required for nsenter
       tolerations:
