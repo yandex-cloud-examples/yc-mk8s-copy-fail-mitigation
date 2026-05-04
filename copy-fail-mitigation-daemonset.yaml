@@ -107,9 +107,6 @@ spec:
             - name: host-etc-root
               mountPath: /host/etc
           resources:
-            requests:
-              cpu: 10m
-              memory: 64Mi
             limits:
               cpu: 200m
               memory: 128Mi
@@ -162,9 +159,6 @@ spec:
             - name: host-etc-root
               mountPath: /host/etc
           resources:
-            requests:
-              cpu: 5m
-              memory: 32Mi
             limits:
               cpu: 50m
               memory: 64Mi
