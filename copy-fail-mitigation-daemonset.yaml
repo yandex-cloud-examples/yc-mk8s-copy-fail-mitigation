@@ -62,7 +62,11 @@ spec:
 
               echo ""
               echo "Step 3: Unloading algif_aead module if loaded..."
-              nsenter -t 1 -m -u -n -i -- rmmod algif_aead 2>/dev/null && echo "✔️ Module unloaded successfully" || echo "✔️ Module was not loaded or already unloaded"
+              if nsenter -t 1 -m -u -n -i -- modprobe -r algif_aead; then
+                echo "✔️ Module unloaded successfully"
+              else
+                echo "✔️ Module was not loaded or already unloaded"
+              fi
 
               echo ""
               echo "Step 4: Verifying the fix..."
@@ -94,9 +98,9 @@ spec:
                 - ALL
               add:
                 - SYS_ADMIN  # Required for nsenter
-                - SYS_PTRACE  # Required for nsenter
                 - SYS_CHROOT  # Required for nsenter
                 - SYS_MODULE  # Required for rmmod
+                - SYS_PTRACE  # Required for nsenter
             privileged: false
             procMount: Default  # Required for nsenter
             readOnlyRootFilesystem: true
@@ -134,7 +138,7 @@ spec:
                 # Check if module is loaded (should not be)
                 if nsenter -t 1 -m -u -n -i -- lsmod | grep -q algif_aead; then
                   echo "[$(date)] WARNING: algif_aead module is loaded on $(cat /host/etc/hostname), attempting to unload..."
-                  nsenter -t 1 -m -u -n -i -- rmmod algif_aead 2>/dev/null || echo "[$(date)] Could not unload module"
+                  nsenter -t 1 -m -u -n -i -- modprobe -r algif_aead || echo "[$(date)] Could not unload module"
                 fi
               done
           securityContext:
@@ -144,9 +148,9 @@ spec:
                 - ALL
               add:
                 - SYS_ADMIN  # Required for nsenter
-                - SYS_PTRACE  # Required for nsenter
                 - SYS_CHROOT  # Required for nsenter
                 - SYS_MODULE  # Required for rmmod
+                - SYS_PTRACE  # Required for nsenter
             privileged: false
             procMount: Default  # Required for nsenter
             readOnlyRootFilesystem: true
