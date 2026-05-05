@@ -96,6 +96,7 @@ spec:
                 - SYS_ADMIN  # Required for nsenter
                 - SYS_PTRACE  # Required for nsenter
                 - SYS_CHROOT  # Required for nsenter
+                - SYS_MODULE  # Required for rmmod
             privileged: false
             procMount: Default  # Required for nsenter
             readOnlyRootFilesystem: true
@@ -145,6 +146,7 @@ spec:
                 - SYS_ADMIN  # Required for nsenter
                 - SYS_PTRACE  # Required for nsenter
                 - SYS_CHROOT  # Required for nsenter
+                - SYS_MODULE  # Required for rmmod
             privileged: false
             procMount: Default  # Required for nsenter
             readOnlyRootFilesystem: true
