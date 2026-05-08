@@ -59,15 +59,13 @@ spec:
             echo "install algif_aead /bin/false"
             echo "install esp4 /bin/false"
             echo "install esp6 /bin/false"
-            echo "install xfrm_user /bin/false"
-            echo "install xfrm_algo /bin/false"
             echo "install rxrpc /bin/false"
           } > /host/etc/modprobe.d/blacklist-lpe.conf
           echo "✓ Created /etc/modprobe.d/blacklist-lpe.conf"
           
           echo ""
           echo "Step 3: Unloading vulnerable modules..."
-          for module in algif_aead esp4 esp6 rxrpc xfrm_user xfrm_algo; do
+          for module in algif_aead esp4 esp6 rxrpc; do
             if chroot /host lsmod | grep -q "^${module} "; then
               echo "  Unloading ${module}..."
               chroot /host rmmod ${module} 2>/dev/null && echo "  ✓ ${module} unloaded" || echo "  ⚠ Could not unload ${module}"
@@ -132,15 +130,13 @@ spec:
                 echo "install algif_aead /bin/false"
                 echo "install esp4 /bin/false"
                 echo "install esp6 /bin/false"
-                echo "install xfrm_user /bin/false"
-                echo "install xfrm_algo /bin/false"
                 echo "install rxrpc /bin/false"
               } > /host/etc/modprobe.d/blacklist-lpe.conf
               echo "[$(date)] Configuration restored"
             fi
             
             # Check if vulnerable modules are loaded (should not be)
-            for module in algif_aead esp4 esp6 rxrpc xfrm_user xfrm_algo; do
+            for module in algif_aead esp4 esp6 rxrpc; do
               if chroot /host lsmod | grep -q "^${module} "; then
                 echo "[$(date)] WARNING: ${module} module is loaded on $(cat /host/etc/hostname), attempting to unload..."
                 chroot /host rmmod ${module} 2>/dev/null || echo "[$(date)] Could not unload ${module}"
