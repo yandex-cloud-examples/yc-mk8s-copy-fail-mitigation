@@ -1,50 +1,55 @@
-# CVE-2026-31431 Fix for Yandex Managed Kubernetes
+# Copy Fail / Dirty Frag Mitigation for Yandex Managed Kubernetes
 
-Автоматическое исправление уязвимости CVE-2026-31431 в Linux kernel на всех worker нодах Yandex Managed Kubernetes кластера.
+Автоматическое применение митигации для уязвимостей `CVE-2026-31431`, `CVE-2026-43284` и `CVE-2026-43500` в Linux kernel на всех worker-нодах Yandex Managed Kubernetes кластера.
 
 ## Описание уязвимости
 
-**Идентификатор CVE (CVE ID):** CVE-2026-31431
+**Идентификатор CVE (CVE ID):** `CVE-2026-43284`, `CVE-2026-43500`
 
-**Ссылка на CVE:** https://nvd.nist.gov/vuln/detail/CVE-2026-31431
+**Ссылка на CVE:** https://nvd.nist.gov/vuln/detail/CVE-2026-43284
 
 **Исходный отчет:**
-- Сайт уязвимости: https://copy.fail/
-- Технический разбор Xint Code (Theori): https://xint.io/blog/copy-fail-linux-distributions
-- PoC и issue tracker: https://github.com/theori-io/copy-fail-CVE-2026-31431
+- Dirty Frag (PoC и write-up): https://github.com/V4bel/dirtyfrag
+- Copy Fail 2: Electric Boogaloo (PoC xfrm-ESP): https://github.com/0xdeadbeefnetwork/Copy_Fail2-Electric_Boogaloo
+- Рассылка oss-security: https://www.openwall.com/lists/oss-security/2026/05/07/8
 
 **Краткое описание:**
 
-Copy Fail (CVE-2026-31431) — это логическая уязвимость в подсистеме криптографического API ядра Linux, позволяющая обычному пользователю системы получить права суперпользователя (root). PoC работает на всех основных дистрибутивах Linux, выпущенных с 2017 года и до момента выхода патча, без модификаций под конкретное ядро или дистрибутив.
+Dirty Frag - это класс логических уязвимостей в ядре Linux, позволяющий непривилегированному локальному пользователю получить права суперпользователя (`root`). Эксплуатация объединяет два независимых page-cache write-примитива в подсистемах `xfrm-ESP` и `RxRPC`, каждый из которых самодостаточен для повышения привилегий.
+
+`Copy Fail 2: Electric Boogaloo` - независимый PoC, эксплуатирующий `xfrm-ESP`-примитив (`CVE-2026-43284`). По классу уязвимости он аналогичен исходному `Copy Fail` (`CVE-2026-31431`), поэтому этот DaemonSet сохраняет митигацию и для исходного `AF_ALG`-сценария, и для новых вариантов `Dirty Frag`.
 
 **Атака:**
-- не требует удалённого доступа — только непривилегированный локальный аккаунт
-- не требует ни race window, ни kernel-specific смещений
-- использует крипто-API ядра (AF_ALG), который включён в дефолтных конфигурациях практически всех мейнстрим-дистрибутивов
-- может быть использована как примитив побега из контейнера на хост, поскольку page cache общий для всего узла
+- не требует удалённого доступа - только непривилегированный локальный аккаунт
+- является детерминистическим логическим багом без race condition - успешна с первой попытки
+- не приводит к `kernel panic` при неудачной эксплуатации
+- может быть использована как примитив побега из контейнера на хост, поскольку `page cache` общий для всего узла
+
+Корневая причина обоих вариантов одна: при использовании `splice()` / `MSG_SPLICE_PAGES` ядро помещает страницы `page cache` напрямую во фрагменты сокетных буферов (`skb`). Подсистемы `xfrm-ESP` и `RxRPC` выполняют дешифрование in-place над такими фрагментами, не проверяя, являются ли они приватными. В результате атакующий получает контролируемую запись в `page cache` любого читаемого файла.
 
 **Затронутые технологии:**
-- Ядро Linux, подсистема crypto/ (модуль algif_aead)
-- интерфейс пользовательского пространства AF_ALG
-- системный вызов splice() в связке с сокетами AF_ALG
+- Ядро Linux, подсистема `net/ipv4/esp4.c` / `net/ipv6/esp6.c` (`xfrm-ESP`)
+- Ядро Linux, подсистема `net/rxrpc/rxkad.c` (`RxRPC` / `RxKAD`)
+- Системные вызовы `splice()` / `vmsplice()` в связке с UDP-сокетами (`ESP-in-UDP`) и `AF_RXRPC`
+- Отдельно сохраняется митигация исходного `Copy Fail` (`CVE-2026-31431`) через блокировку `AF_ALG` (`algif_aead`)
 
-Уязвимость напрямую не затрагивает следующие пути использования крипто-API: dm-crypt / LUKS, kTLS, IPsec/XFRM, in-kernel TLS, OpenSSL/GnuTLS/NSS в дефолтных сборках, SSH, kernel keyring crypto — все они работают с in-kernel crypto API напрямую и не проходят через AF_ALG.
+Уязвимость напрямую не затрагивает `AF_ALG` (`algif_aead`) как часть `Dirty Frag` - это отдельная уязвимость `Copy Fail` (`CVE-2026-31431`). Также напрямую не затрагиваются `dm-crypt` / `LUKS`, `kTLS`, `in-kernel TLS` и `IPsec` в режиме tunnel без UDP-инкапсуляции.
 
 **Вектор атаки и уровень опасности согласно CVSS v.3.1:**
 
-Базовая оценка: **7.8 HIGH**
+Базовая оценка: на момент публикации не присвоена.
 
-Vector: `CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H`
+По характеру уязвимость аналогична `Copy Fail` (`CVE-2026-31431`, `7.8 HIGH`, `CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H`) - это локальное повышение привилегий без race condition.
 
 ## Что делает этот фикс
 
 DaemonSet автоматически на каждой worker ноде кластера:
 
-1. **Проверяет уязвимость** - тестирует доступность AF_ALG AEAD интерфейса
-2. **Блокирует модуль** - создает конфигурацию `/etc/modprobe.d/disable-algif.conf`
-3. **Выгружает модуль** - выполняет `rmmod algif_aead` если модуль загружен
-4. **Верифицирует фикс** - проверяет что уязвимость устранена
-5. **Мониторит** - каждый час проверяет наличие конфигурации и восстанавливает при необходимости
+1. **Проверяет доступность `AF_ALG`** - выполняет быстрый тест для исходного сценария `Copy Fail`
+2. **Блокирует уязвимые модули** - создает `/etc/modprobe.d/blacklist-lpe.conf` с правилами для `algif_aead`, `esp4`, `esp6` и `rxrpc`
+3. **Выгружает модули** - выполняет `rmmod` для `algif_aead`, `esp4`, `esp6` и `rxrpc`, если они загружены
+4. **Сбрасывает `page cache` и верифицирует конфигурацию** - очищает кэши и проверяет наличие конфигурационного файла
+5. **Мониторит состояние** - каждый час проверяет наличие конфигурации и повторно выгружает модули при необходимости
 
 ## Быстрый старт
 
@@ -91,29 +96,38 @@ kubectl logs -n kube-system -l app=cve-2026-31431-fix -c monitor
 
 ```
 =========================================
-CVE-2026-31431 Fix for Yandex Managed K8s
+Copy Fail / Dirty Frag mitigation for Yandex Managed K8s
 Node: demo-ru-central1-a-1
-Date: Thu Apr 30 14:00:00 UTC 2026
+Date: Thu May 08 14:00:00 UTC 2026
 =========================================
 
 Step 1: Checking vulnerability before fix...
 ❌ System is VULNERABLE - AF_ALG AEAD interface is accessible
 
 Step 2: Creating modprobe configuration...
-✓ Created /etc/modprobe.d/disable-algif.conf
+✓ Created /etc/modprobe.d/blacklist-lpe.conf
 
-Step 3: Unloading algif_aead module if loaded...
-✓ Module unloaded successfully
+Step 3: Unloading vulnerable modules...
+  ✓ algif_aead unloaded
+  ✓ esp4 not loaded
+  ✓ esp6 not loaded
+  ✓ rxrpc not loaded
+
+Step 3.5: Dropping system caches...
+✓ System caches cleared
 
 Step 4: Verifying the fix...
 ✓ Configuration file exists:
 install algif_aead /bin/false
+install esp4 /bin/false
+install esp6 /bin/false
+install rxrpc /bin/false
 
 Step 5: Testing if vulnerability is fixed...
 ✓ AF_ALG AEAD interface is properly blocked
 
 =========================================
-✓ CVE-2026-31431 fix applied successfully
+✓ Mitigation applied successfully
 =========================================
 ```
 
@@ -122,7 +136,7 @@ Step 5: Testing if vulnerability is fixed...
 Вы можете проверить наличие уязвимости на ноде вручную. Подключитесь к ноде по SSH и выполните:
 
 ```bash
-# Проверить уязвимость
+# Проверить доступность исходного сценария Copy Fail через AF_ALG
 python3 -c 'import socket; s = socket.socket(socket.AF_ALG, socket.SOCK_SEQPACKET, 0); s.bind(("aead","authencesn(hmac(sha256),cbc(aes))")); print("AF_ALG AEAD available - VULNERABLE")'
 
 # Если выводит "AF_ALG AEAD available - VULNERABLE" - система уязвима
@@ -133,10 +147,19 @@ python3 -c 'import socket; s = socket.socket(socket.AF_ALG, socket.SOCK_SEQPACKE
 
 ```bash
 # Проверить наличие конфигурации блокировки
-cat /etc/modprobe.d/disable-algif.conf
+cat /etc/modprobe.d/blacklist-lpe.conf
 
 # Ожидаемый вывод:
 # install algif_aead /bin/false
+# install esp4 /bin/false
+# install esp6 /bin/false
+# install rxrpc /bin/false
+```
+
+Проверить, что уязвимые модули не загружены:
+
+```bash
+lsmod | egrep 'algif_aead|esp4|esp6|rxrpc'
 ```
 
 ## Удаление фикса
@@ -147,12 +170,12 @@ cat /etc/modprobe.d/disable-algif.conf
 kubectl delete -f copy-fail-mitigation-daemonset.yaml
 ```
 
-**Важно:** Удаление DaemonSet **не удалит** конфигурационные файлы с нод. Файл `/etc/modprobe.d/disable-algif.conf` останется на месте и будет продолжать защищать систему.
+**Важно:** Удаление DaemonSet **не удалит** конфигурационные файлы с нод. Файл `/etc/modprobe.d/blacklist-lpe.conf` останется на месте и будет продолжать защищать систему.
 
 Для полного удаления фикса с нод нужно подключиться к каждой ноде по SSH и вручную удалить файл:
 
 ```bash
-rm /etc/modprobe.d/disable-algif.conf
+rm /etc/modprobe.d/blacklist-lpe.conf
 ```
 
 ## Технические детали
