@@ -4,12 +4,12 @@ metadata:
   name: cve-2026-31431-fix
   namespace: kube-system
   labels:
-    app: cve-2026-31431-fix
+    app.kubernetes.io/name: cve-2026-31431-fix
     security: vulnerability-mitigation
 spec:
   selector:
     matchLabels:
-      app: cve-2026-31431-fix
+      app.kubernetes.io/name: cve-2026-31431-fix
   updateStrategy:
     type: RollingUpdate
     rollingUpdate:
@@ -17,140 +17,174 @@ spec:
   template:
     metadata:
       labels:
-        app: cve-2026-31431-fix
+        app.kubernetes.io/name: cve-2026-31431-fix
     spec:
-      hostPID: true
+      priorityClassName: system-node-critical
+      hostPID: true  # Required for nsenter
+      securityContext:
+        appArmorProfile:
+          type: Unconfined  # Required for nsenter
       tolerations:
-      # Tolerate all taints to ensure deployment on all worker nodes
-      - operator: Exists
-        effect: NoExecute
-      - operator: Exists
-        effect: NoSchedule
+        # Tolerate all taints to ensure deployment on all worker nodes
+        - effect: NoSchedule
+          operator: Exists
+        - effect: NoExecute
+          operator: Exists
       initContainers:
-      - name: apply-fix
-        image: ubuntu:22.04
-        command:
-        - /bin/bash
-        - -c
-        - |
-          set -e
-          
-          echo "========================================="
-          echo "CVE-2026-31431 Fix for Yandex Managed K8s"
-          echo "Node: $(cat /host/etc/hostname 2>/dev/null || hostname)"
-          echo "Date: $(date)"
-          echo "========================================="
-          
-          echo ""
-          echo "Step 1: Checking vulnerability before fix..."
-          if nsenter -t 1 -m -u -i -n -p -- python3 -c 'import socket; s = socket.socket(socket.AF_ALG, socket.SOCK_SEQPACKET, 0); s.bind(("aead","authencesn(hmac(sha256),cbc(aes))"))' 2>/dev/null; then
-            echo "❌ System is VULNERABLE - AF_ALG AEAD interface is accessible"
-          else
-            echo "✓ AF_ALG AEAD interface is not accessible"
-          fi
-          
-          echo ""
-          echo "Step 2: Creating modprobe configuration..."
-          # Create modprobe.d directory if it doesn't exist
-          mkdir -p /host/etc/modprobe.d
-          
-          # Disable vulnerable modules
-          {
-            echo "install algif_aead /bin/false"
-            echo "install esp4 /bin/false"
-            echo "install esp6 /bin/false"
-            echo "install rxrpc /bin/false"
-          } > /host/etc/modprobe.d/blacklist-lpe.conf
-          echo "✓ Created /etc/modprobe.d/blacklist-lpe.conf"
-          
-          echo ""
-          echo "Step 3: Unloading vulnerable modules..."
-          for module in algif_aead esp4 esp6 rxrpc; do
-            if chroot /host lsmod | grep -q "^${module} "; then
-              echo "  Unloading ${module}..."
-              chroot /host rmmod ${module} 2>/dev/null && echo "  ✓ ${module} unloaded" || echo "  ⚠ Could not unload ${module}"
-            else
-              echo "  ✓ ${module} not loaded"
-            fi
-          done
-          
-          echo ""
-          echo "Step 3.5: Dropping system caches..."
-          echo 3 > /host/proc/sys/vm/drop_caches
-          echo "✓ System caches cleared"
-          
-          echo ""
-          echo "Step 4: Verifying the fix..."
-          if [ -f /host/etc/modprobe.d/blacklist-lpe.conf ]; then
-            echo "✓ Configuration file exists:"
-            cat /host/etc/modprobe.d/blacklist-lpe.conf
-          else
-            echo "✗ ERROR: Fix verification failed - configuration file not found"
-            exit 1
-          fi
-          
-          echo ""
-          echo "Step 5: Testing if vulnerability is fixed..."
-          if nsenter -t 1 -m -u -i -n -p -- python3 -c 'import socket; s = socket.socket(socket.AF_ALG, socket.SOCK_SEQPACKET, 0); s.bind(("aead","authencesn(hmac(sha256),cbc(aes))"))' 2>/dev/null; then
-            echo "✗ ERROR: AF_ALG AEAD is still accessible after fix!"
-            exit 1
-          else
-            echo "✓ AF_ALG AEAD interface is properly blocked"
-          fi
-          
-          echo ""
-          echo "========================================="
-          echo "✓ CVE-2026-31431 fix applied successfully"
-          echo "========================================="
-        securityContext:
-          privileged: true
-        volumeMounts:
-        - name: host-root
-          mountPath: /host
-        resources: {}
-      containers:
-      - name: monitor
-        image: ubuntu:22.04
-        command:
-        - /bin/bash
-        - -c
-        - |
-          echo "CVE-2026-31431 fix monitoring started on node: $(cat /host/etc/hostname 2>/dev/null || hostname)"
-          echo "Monitoring interval: 1 hour"
-          
-          # Keep the pod running and monitor the fix
-          while true; do
-            sleep 3600
-            
-            # Check if configuration file still exists
-            if [ ! -f /host/etc/modprobe.d/blacklist-lpe.conf ]; then
-              echo "[$(date)] WARNING: Fix configuration missing on $(cat /host/etc/hostname), reapplying..."
+        - name: apply-fix
+          image: busybox:1.36.1
+          command:
+            - /bin/sh
+            - -uec
+            - |
+              echo "========================================="
+              echo "CVE-2026-31431 Fix for Yandex Managed K8s"
+              echo "Node: $(cat /host/etc/hostname 2>/dev/null || hostname)"
+              echo "Date: $(date)"
+              echo "========================================="
+
+              echo ""
+              echo "Step 1: Checking vulnerability before fix..."
+              if nsenter -t 1 -m -u -n -i -- python3 -c 'import socket; s = socket.socket(socket.AF_ALG, socket.SOCK_SEQPACKET, 0); s.bind(("aead","authencesn(hmac(sha256),cbc(aes))"))' 2>/dev/null; then
+                echo "❌ System is VULNERABLE - AF_ALG AEAD interface is accessible"
+              else
+                echo "✔️ AF_ALG AEAD interface is not accessible"
+              fi
+
+              echo ""
+              echo "Step 2: Creating modprobe configuration..."
+              # Create modprobe.d directory if it doesn't exist
               mkdir -p /host/etc/modprobe.d
+
+              # Disable vulnerable modules
               {
                 echo "install algif_aead /bin/false"
                 echo "install esp4 /bin/false"
                 echo "install esp6 /bin/false"
                 echo "install rxrpc /bin/false"
               } > /host/etc/modprobe.d/blacklist-lpe.conf
-              echo "[$(date)] Configuration restored"
-            fi
-            
-            # Check if vulnerable modules are loaded (should not be)
-            for module in algif_aead esp4 esp6 rxrpc; do
-              if chroot /host lsmod | grep -q "^${module} "; then
-                echo "[$(date)] WARNING: ${module} module is loaded on $(cat /host/etc/hostname), attempting to unload..."
-                chroot /host rmmod ${module} 2>/dev/null || echo "[$(date)] Could not unload ${module}"
+              echo "✔️ Created /etc/modprobe.d/blacklist-lpe.conf"
+
+              echo ""
+              echo "Step 3: Unloading vulnerable modules..."
+              for module in algif_aead esp4 esp6 rxrpc; do
+                if nsenter -t 1 -m -u -n -i -- lsmod | grep -q "^${module} "; then
+                  echo "  Unloading ${module}..."
+                  nsenter -t 1 -m -u -n -i -- modprobe -r "${module}" && echo "  ✔️ ${module} unloaded" || echo "  ⚠️ Could not unload ${module}"
+                else
+                  echo "✔️ ${module} not loaded"
+                fi
+              done
+
+              echo ""
+              echo "Step 3.5: Dropping system caches..."
+              echo 3 | nsenter -t 1 -m -u -n -i -- tee /proc/sys/vm/drop_caches >/dev/null
+              echo "✔️ System caches cleared"
+
+              echo ""
+              echo "Step 4: Verifying the fix..."
+              if [ -f /host/etc/modprobe.d/blacklist-lpe.conf ]; then
+                echo "✔️ Configuration file exists:"
+                cat /host/etc/modprobe.d/blacklist-lpe.conf
+              else
+                echo "❌ ERROR: Fix verification failed - configuration file not found"
+                exit 1
               fi
-            done
-          done
-        securityContext:
-          privileged: true
-        volumeMounts:
-        - name: host-root
-          mountPath: /host
-        resources: {}
+
+              echo ""
+              echo "Step 5: Testing if vulnerability is fixed..."
+              if nsenter -t 1 -m -u -n -i -- python3 -c 'import socket; s = socket.socket(socket.AF_ALG, socket.SOCK_SEQPACKET, 0); s.bind(("aead","authencesn(hmac(sha256),cbc(aes))"))' 2>/dev/null; then
+                echo "❌ ERROR: AF_ALG AEAD is still accessible after fix!"
+                exit 1
+              else
+                echo "✔️ AF_ALG AEAD interface is properly blocked"
+              fi
+
+              echo ""
+              echo "========================================="
+              echo "✔️ CVE-2026-31431 fix applied successfully"
+              echo "========================================="
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+              add:
+                - SYS_ADMIN  # Required for nsenter
+                - SYS_CHROOT  # Required for nsenter
+                - SYS_MODULE  # Required for rmmod
+                - SYS_PTRACE  # Required for nsenter
+            privileged: false
+            procMount: Default  # Required for nsenter
+            readOnlyRootFilesystem: true
+            runAsGroup: 0
+            runAsNonRoot: false
+            runAsUser: 0
+            seccompProfile:
+              type: RuntimeDefault
+          volumeMounts:
+            - name: host-etc-root
+              mountPath: /host/etc
+          resources: {}  # Bypass scheduling resources constraints to guarantee pod scheduling
+      containers:
+        - name: monitor
+          image: busybox:1.36.1
+          command:
+            - /bin/sh
+            - -uec
+            - |
+              echo "CVE-2026-31431 fix monitoring started on node: $(cat /host/etc/hostname 2>/dev/null || hostname)"
+              echo "Monitoring interval: 1 hour"
+
+              # Keep the pod running and monitor the fix
+              while true; do
+                sleep 3600
+
+                # Check if configuration file still exists
+                if [ ! -f /host/etc/modprobe.d/blacklist-lpe.conf ]; then
+                  echo "[$(date)] WARNING: Fix configuration missing on $(cat /host/etc/hostname), reapplying..."
+                  mkdir -p /host/etc/modprobe.d
+                  {
+                    echo "install algif_aead /bin/false"
+                    echo "install esp4 /bin/false"
+                    echo "install esp6 /bin/false"
+                    echo "install rxrpc /bin/false"
+                  } > /host/etc/modprobe.d/blacklist-lpe.conf
+                  echo "[$(date)] Configuration restored"
+                fi
+
+                # Check if vulnerable modules are loaded (should not be)
+                for module in algif_aead esp4 esp6 rxrpc; do
+                  if nsenter -t 1 -m -u -n -i -- lsmod | grep -q "^${module} "; then
+                    echo "[$(date)] WARNING: ${module} module is loaded on $(cat /host/etc/hostname), attempting to unload..."
+                    nsenter -t 1 -m -u -n -i -- modprobe -r "${module}" || echo "[$(date)] Could not unload ${module}"
+                  fi
+                done
+              done
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+              add:
+                - SYS_ADMIN  # Required for nsenter
+                - SYS_CHROOT  # Required for nsenter
+                - SYS_MODULE  # Required for rmmod
+                - SYS_PTRACE  # Required for nsenter
+            privileged: false
+            procMount: Default  # Required for nsenter
+            readOnlyRootFilesystem: true
+            runAsGroup: 0
+            runAsNonRoot: false
+            runAsUser: 0
+            seccompProfile:
+              type: RuntimeDefault
+          volumeMounts:
+            - name: host-etc-root
+              mountPath: /host/etc
+          resources: {}  # Bypass scheduling resources constraints to guarantee pod scheduling
       volumes:
-      - name: host-root
-        hostPath:
-          path: /
-          type: Directory
+        - name: host-etc-root
+          hostPath:
+            path: /etc
+            type: Directory
