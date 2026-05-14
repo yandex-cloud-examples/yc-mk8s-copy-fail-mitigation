@@ -56,23 +56,36 @@ spec:
               # Create modprobe.d directory if it doesn't exist
               mkdir -p /host/etc/modprobe.d
 
-              # Disable algif_aead module
-              echo "install algif_aead /bin/false" > /host/etc/modprobe.d/disable-algif.conf
-              echo "✔️ Created /etc/modprobe.d/disable-algif.conf"
+              # Disable vulnerable modules
+              {
+                echo "install algif_aead /bin/false"
+                echo "install esp4 /bin/false"
+                echo "install esp6 /bin/false"
+                echo "install rxrpc /bin/false"
+              } > /host/etc/modprobe.d/blacklist-lpe.conf
+              echo "✔️ Created /etc/modprobe.d/blacklist-lpe.conf"
 
               echo ""
-              echo "Step 3: Unloading algif_aead module if loaded..."
-              if nsenter -t 1 -m -u -n -i -- modprobe -r algif_aead; then
-                echo "✔️ Module unloaded successfully"
-              else
-                echo "✔️ Module was not loaded or already unloaded"
-              fi
+              echo "Step 3: Unloading vulnerable modules..."
+              for module in algif_aead esp4 esp6 rxrpc; do
+                if nsenter -t 1 -m -u -n -i -- lsmod | grep -q "^${module} "; then
+                  echo "  Unloading ${module}..."
+                  nsenter -t 1 -m -u -n -i -- modprobe -r "${module}" && echo "  ✔️ ${module} unloaded" || echo "  ⚠️ Could not unload ${module}"
+                else
+                  echo "✔️ ${module} not loaded"
+                fi
+              done
+
+              echo ""
+              echo "Step 3.5: Dropping system caches..."
+              echo 3 | nsenter -t 1 -m -u -n -i -- tee /proc/sys/vm/drop_caches >/dev/null
+              echo "✔️ System caches cleared"
 
               echo ""
               echo "Step 4: Verifying the fix..."
-              if [ -f /host/etc/modprobe.d/disable-algif.conf ]; then
+              if [ -f /host/etc/modprobe.d/blacklist-lpe.conf ]; then
                 echo "✔️ Configuration file exists:"
-                cat /host/etc/modprobe.d/disable-algif.conf
+                cat /host/etc/modprobe.d/blacklist-lpe.conf
               else
                 echo "❌ ERROR: Fix verification failed - configuration file not found"
                 exit 1
@@ -128,18 +141,25 @@ spec:
                 sleep 3600
 
                 # Check if configuration file still exists
-                if [ ! -f /host/etc/modprobe.d/disable-algif.conf ]; then
+                if [ ! -f /host/etc/modprobe.d/blacklist-lpe.conf ]; then
                   echo "[$(date)] WARNING: Fix configuration missing on $(cat /host/etc/hostname), reapplying..."
                   mkdir -p /host/etc/modprobe.d
-                  echo "install algif_aead /bin/false" > /host/etc/modprobe.d/disable-algif.conf
+                  {
+                    echo "install algif_aead /bin/false"
+                    echo "install esp4 /bin/false"
+                    echo "install esp6 /bin/false"
+                    echo "install rxrpc /bin/false"
+                  } > /host/etc/modprobe.d/blacklist-lpe.conf
                   echo "[$(date)] Configuration restored"
                 fi
 
-                # Check if module is loaded (should not be)
-                if nsenter -t 1 -m -u -n -i -- lsmod | grep -q algif_aead; then
-                  echo "[$(date)] WARNING: algif_aead module is loaded on $(cat /host/etc/hostname), attempting to unload..."
-                  nsenter -t 1 -m -u -n -i -- modprobe -r algif_aead || echo "[$(date)] Could not unload module"
-                fi
+                # Check if vulnerable modules are loaded (should not be)
+                for module in algif_aead esp4 esp6 rxrpc; do
+                  if nsenter -t 1 -m -u -n -i -- lsmod | grep -q "^${module} "; then
+                    echo "[$(date)] WARNING: ${module} module is loaded on $(cat /host/etc/hostname), attempting to unload..."
+                    nsenter -t 1 -m -u -n -i -- modprobe -r "${module}" || echo "[$(date)] Could not unload ${module}"
+                  fi
+                done
               done
           securityContext:
             allowPrivilegeEscalation: false
